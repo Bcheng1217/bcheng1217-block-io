@@ -1,0 +1,18 @@
+author: bcheng1217
+date: 2026-05-29
+question: |
+  `fsync()` 會因為「Granularity Mismatch」大幅放大 Journaling 的效能成本，而 2024 年發表的 FastCommit 透過 Hybrid 策略解決了這個問題。關於傳統 JBD2 與 FastCommit 的設計比較，下列敘述何者正確？
+options:
+  - text: "JBD2 採用的 Logical journaling 會在 `fsync()` 時產生嚴重的「Granularity Mismatch」，即便應用程式只修改 8 bytes，也必須寫入高達數十 KB 的操作描述與 descriptors。"
+    explanation: |
+      這個敘述是錯誤的。JBD2 採用的是 **Physical journaling**，它會記錄完整的 4 KB block image。這才是導致修改 8 bytes 卻要連帶寫入大量完整區塊（如 inode block、descriptor block 等），進而產生 granularity mismatch 的主因；而只記錄幾十 bytes 操作描述的作法，是 Logical journaling 的特徵。
+  - text: "FastCommit 為了徹底解決 JBD2 的效能瓶頸，將 ext4 的底層架構完全替換為純 Logical journaling (類似 XFS)，捨棄了原本的 physical block 記錄，藉此換取高達 1.2 倍的吞吐量提升 [4, 6]。"
+    explanation: |
+      這個敘述是錯誤的。FastCommit 採用的是 **混合策略**，它並沒有捨棄 JBD2。系統依然會每 5 秒跑一次 JBD2 的 physical commit (slow commit)，只有在處理頻繁且緊急的 `fsync()` 時，才將路徑改為寫入輕量的 logical FCLog，這讓它能在不用改 on-disk format 的情況下無痛升級。
+  - text: "FastCommit 的 Hybrid 策略保留了 JBD2 做定期的 Physical commit，但將 `fsync()` 的路徑改寫為輕量的 Logical FCLog，有效解決了 Granularity Mismatch 並大幅減少 Journal 消耗的寫入頻寬 [2, 7]。"
+    correct: true
+    explanation: |
+      這個敘述是正確的。這正是 FastCommit 的核心精神。它利用 periodic 的 physical commit (JBD2) 來保持 recovery 機制的穩定與單純，同時利用 logical log (FCLog) 極度精簡的特性（例如將 append 操作的 journal 寫入量從 24 KB 降至 168 bytes），專門用來消除 `fsync()` 帶來的寫入放大與頻寬消耗。
+  - text: "JBD2 在 `fsync()` 時最昂貴的成本是 Cache flush，而 FastCommit 透過將系統改為 Copy-on-Write (CoW) 結構，利用 atomic root swap 的特性，成功免除了 Cache flush 的需求 [3, 8]。"
+    explanation: |
+      這個敘述是錯誤的。FastCommit 依然是在 ext4（Journaling 結構）之上運作的優化，並沒有將檔案系統改為 CoW 機制（如 Btrfs）。它解決效能瓶頸的方式是縮減 `fsync()` 寫入量（Logical log），而非改變檔案系統底層的 Atomicity boundary 結構。
